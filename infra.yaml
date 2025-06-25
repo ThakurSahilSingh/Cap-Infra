@@ -282,6 +282,7 @@ Resources:
     Type: AWS::EKS::Cluster
     Properties:
       Name: three-tier-cluster
+      Version: "1.32"
       RoleArn: !GetAtt EKSClusterRole.Arn
       ResourcesVpcConfig:
         SubnetIds:

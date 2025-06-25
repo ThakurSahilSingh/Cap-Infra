@@ -1,32 +1,29 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Production-grade infrastructure for EKS-based microservices application with MySQL RDS
+Description: Full stack for EKS app deployment including VPC, EKS, RDS, IAM, ECR, S3, CodeBuild, and CodePipeline
 
 Parameters:
-  VpcCidr:
+  GitHubRepo:
     Type: String
-    Default: 10.0.0.0/16
-  DBName:
+    Default: ThakurSahilSingh/AWS-Three-Tier-App-ToDoListApp
+  GitHubBranch:
     Type: String
-    Default: tasksdb
+    Default: main
+  GitHubConnectionArn:
+    Type: String
+    Default: arn:aws:codeconnections:us-east-1:137068239975:connection/9a43b008-427b-4209-b7ea-08743b549f7a
   DBUsername:
     Type: String
     Default: admin
   DBPassword:
     Type: String
     NoEcho: true
-    Default: adminadmin
-  DBInstanceClass:
-    Type: String
-    Default: db.t3.micro
-  ClusterName:
-    Type: String
-    Default: three-tier-cluster
+    Default: Admin123123
 
 Resources:
   VPC:
     Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: !Ref VpcCidr
+      CidrBlock: 10.0.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
       Tags:
@@ -35,7 +32,7 @@ Resources:
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
-  
+
   GatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
@@ -46,58 +43,58 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.1.0/24
       AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.0.1.0/24
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: public-subnet-1
+          Value: PublicSubnet1
         - Key: kubernetes.io/role/elb
           Value: 1
-        - Key: kubernetes.io/cluster/!Ref ClusterName
+        - Key: kubernetes.io/cluster/three-tier-cluster
           Value: shared
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.2.0/24
       AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: 10.0.2.0/24
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: public-subnet-2
+          Value: PublicSubnet2
         - Key: kubernetes.io/role/elb
           Value: 1
-        - Key: kubernetes.io/cluster/!Ref ClusterName
+        - Key: kubernetes.io/cluster/three-tier-cluster
           Value: shared
 
   PrivateSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.3.0/24
       AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.0.3.0/24
       Tags:
         - Key: Name
-          Value: private-subnet-1
+          Value: PrivateSubnet1
         - Key: kubernetes.io/role/internal-elb
           Value: 1
-        - Key: kubernetes.io/cluster/!Ref ClusterName
+        - Key: kubernetes.io/cluster/three-tier-cluster
           Value: shared
 
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.4.0/24
       AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: 10.0.4.0/24
       Tags:
         - Key: Name
-          Value: private-subnet-2
+          Value: PrivateSubnet2
         - Key: kubernetes.io/role/internal-elb
           Value: 1
-        - Key: kubernetes.io/cluster/!Ref ClusterName
+        - Key: kubernetes.io/cluster/three-tier-cluster
           Value: shared
 
   NatEIP:
@@ -111,7 +108,7 @@ Resources:
       SubnetId: !Ref PublicSubnet1
       AllocationId: !GetAtt NatEIP.AllocationId
 
-  RouteTablePublic:
+  PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
@@ -119,23 +116,23 @@ Resources:
   PublicRoute:
     Type: AWS::EC2::Route
     Properties:
-      RouteTableId: !Ref RouteTablePublic
+      RouteTableId: !Ref PublicRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
 
-  RouteAssocPub1:
+  PublicRouteAssoc1:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
+      RouteTableId: !Ref PublicRouteTable
       SubnetId: !Ref PublicSubnet1
-      RouteTableId: !Ref RouteTablePublic
 
-  RouteAssocPub2:
+  PublicRouteAssoc2:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
+      RouteTableId: !Ref PublicRouteTable
       SubnetId: !Ref PublicSubnet2
-      RouteTableId: !Ref RouteTablePublic
 
-  RouteTablePrivate:
+  PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
@@ -143,60 +140,113 @@ Resources:
   PrivateRoute:
     Type: AWS::EC2::Route
     Properties:
-      RouteTableId: !Ref RouteTablePrivate
+      RouteTableId: !Ref PrivateRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       NatGatewayId: !Ref NatGateway
 
-  RouteAssocPri1:
+  PrivateRouteAssoc1:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
+      RouteTableId: !Ref PrivateRouteTable
       SubnetId: !Ref PrivateSubnet1
-      RouteTableId: !Ref RouteTablePrivate
 
-  RouteAssocPri2:
+  PrivateRouteAssoc2:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
+      RouteTableId: !Ref PrivateRouteTable
       SubnetId: !Ref PrivateSubnet2
-      RouteTableId: !Ref RouteTablePrivate
 
-  DBSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
+
+
+### === Part 2: Artifact Infrastructure (S3, CodeBuild, ECR, Roles) ===
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
     Properties:
-      GroupDescription: Allow MySQL
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          CidrIp: 0.0.0.0/0
+      BucketName: three-tier-pipeline-artifacts-fsdfda
 
-  DBSubnetGroup:
-    Type: AWS::RDS::DBSubnetGroup
+  FrontendECRRepo:
+    Type: AWS::ECR::Repository
     Properties:
-      DBSubnetGroupDescription: DB Subnet Group
-      SubnetIds:
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
+      RepositoryName: frontend
 
-  MyRDS:
-    Type: AWS::RDS::DBInstance
+  BackendECRRepo:
+    Type: AWS::ECR::Repository
     Properties:
-      Engine: mysql
-      DBInstanceIdentifier: !Ref DBName
-      MasterUsername: !Ref DBUsername
-      MasterUserPassword: !Ref DBPassword
-      DBName: !Ref DBName
-      AllocatedStorage: 20
-      DBInstanceClass: !Ref DBInstanceClass
-      VPCSecurityGroups:
-        - !Ref DBSecurityGroup
-      DBSubnetGroupName: !Ref DBSubnetGroup
-      PubliclyAccessible: true
-      MultiAZ: false
+      RepositoryName: backend
 
-  EKSRole:
+  CodeBuildServiceRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: CodeBuildServiceRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AdministratorAccess
+        - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
+        - arn:aws:iam::aws:policy/AWSCodeBuildAdminAccess
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: ThreeTierAppBuildProject
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:6.0
+        Type: LINUX_CONTAINER
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: REGION
+            Value: !Ref AWS::Region
+          - Name: FRONTEND_IMAGE_REPO
+            Value: frontend
+          - Name: BACKEND_IMAGE_REPO
+            Value: backend
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec.yml
+      TimeoutInMinutes: 30
+
+  # # Optional: Namespace YAML generation for safe deployment
+  #   BuildspecPatchInstructions:
+  #   Type: AWS::SSM::Document
+  #   Properties:
+  #     DocumentType: Command
+  #     Content:
+  #       schemaVersion: '2.2'
+  #       description: "Patch buildspec to include namespace.yaml generation."
+  #       mainSteps:
+  #         - action: aws:runCommand
+  #           name: patchBuildspec
+  #           inputs:
+  #             runCommand:
+  #               - echo "Adding namespace.yaml generation..."
+  #               - |
+  #                 echo "apiVersion: v1
+  #                 kind: Namespace
+  #                 metadata:
+  #                   name: three-tier" > k8s-out/namespace.yaml
+
+
+### === Part 3: EKS Cluster and Node Group ===
+
+
+  EKSClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: EKSClusterRole
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -207,27 +257,234 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
         - arn:aws:iam::aws:policy/AmazonEKSVPCResourceController
+      Tags:
+        - Key: Name
+          Value: three-tier-cluster-role
 
-  EKSCluster:
+  EKSNodeGroupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: EKSNodeGroupRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  MyEKSCluster:
     Type: AWS::EKS::Cluster
     Properties:
-      Name: !Ref ClusterName
-      RoleArn: !GetAtt EKSRole.Arn
+      Name: three-tier-cluster
+      RoleArn: !GetAtt EKSClusterRole.Arn
       ResourcesVpcConfig:
         SubnetIds:
           - !Ref PublicSubnet1
           - !Ref PublicSubnet2
           - !Ref PrivateSubnet1
           - !Ref PrivateSubnet2
+        EndpointPublicAccess: true
+        EndpointPrivateAccess: false
+      AccessConfig:
+        BootstrapClusterCreatorAdminPermissions: true
+      Tags:
+        - Key: Name
+          Value: three-tier-cluster
 
-Outputs:
-  VPCId:
-    Value: !Ref VPC
-  PublicSubnet1Id:
-    Value: !Ref PublicSubnet1
-  PublicSubnet2Id:
-    Value: !Ref PublicSubnet2
-  RDSMySQLEndpoint:
-    Value: !GetAtt MyRDS.Endpoint.Address
-  EKSClusterName:
-    Value: !Ref ClusterName
+
+
+  MyNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref MyEKSCluster
+      NodeRole: !GetAtt EKSNodeGroupRole.Arn
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      ScalingConfig:
+        MinSize: 1
+        DesiredSize: 2
+        MaxSize: 3
+      InstanceTypes:
+        - t3.medium
+      AmiType: AL2_x86_64
+      DiskSize: 20
+      Tags:
+        Name: three-tier-nodegroup
+
+  RDSDBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable MySQL access from EKS nodes
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: rds-mysql-sg
+
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: three-tier-db-subnet-group
+
+  MyRDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: three-tier-mysql
+      Engine: mysql
+      EngineVersion: 8.0.36
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      AllocatedStorage: 20
+      DBInstanceClass: db.t3.small
+      VPCSecurityGroups:
+        - !Ref RDSDBSecurityGroup
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      PubliclyAccessible: false
+      MultiAZ: false
+      BackupRetentionPeriod: 1
+      Tags:
+        - Key: Name
+          Value: three-tier-rds-instance
+
+
+##############################
+
+
+  CodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CodePipelineServiceRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodePipelineFullAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:*
+                  - codebuild:*
+                  - codecommit:*
+                  - codedeploy:*
+                  - codestar-connections:UseConnection
+                  - iam:PassRole
+                  - eks:Describe*
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+
+  CodePipelineDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CodePipelineEKSDeployRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+
+  ThreeTierPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: GitHubSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: 1
+              OutputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                ConnectionArn: arn:aws:codeconnections:us-east-1:137068239975:connection/9a43b008-427b-4209-b7ea-08743b549f7a
+                FullRepositoryId: ThakurSahilSingh/AWS-Three-Tier-App-ToDoListApp
+                BranchName: main
+                DetectChanges: true
+              RunOrder: 1
+
+        - Name: Build
+          Actions:
+            - Name: CodeBuild
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ProjectName: ThreeTierAppBuildProject
+              RunOrder: 1
+
+        - Name: Deploy
+          Actions:
+            - Name: DeployToEKS
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: EKS
+                Version: '1'
+              InputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ClusterName: three-tier-cluster
+                Namespace: three-tier
+                ManifestFiles: |
+                  namespace.yaml,
+                  secret.yaml,
+                  frontend-deployment.yaml,
+                  backend-deployment.yaml,
+                  frontend-service.yaml,
+                  backend-service.yaml,
+                  ingress.yaml
+              OutputArtifacts: []
+              RunOrder: 1
+
+
+
+

@@ -308,7 +308,7 @@ Resources:
                 - Name: BuildOutput
               Configuration:
                 ClusterName: three-tier-cluster
-                Namespace: three-tier
+                Namespace: default
                 ManifestFiles: |
                   frontend-deployment.yaml,
                   backend-deployment.yaml
